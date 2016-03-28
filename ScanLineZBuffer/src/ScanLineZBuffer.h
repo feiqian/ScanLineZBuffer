@@ -41,8 +41,9 @@ private:
 
 	vector< list<PolygonTableEle>> polygonTable;
 	vector< list<EdgeTableEle>> edgeTable;
-	list< PolygonTableEle> activePolygonTable;
+	vector< PolygonTableEle> activePolygonTable;
 
+	bool needReRender;
 	int width,height;
 	double* zBuffer;
 	Color3** colorBuffer;

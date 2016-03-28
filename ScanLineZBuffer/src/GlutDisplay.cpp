@@ -7,8 +7,6 @@ ScanLineZBuffer* GlutDisplay::engine= NULL;
 
 void GlutDisplay::reshape(int w, int h)
 {
-	// prevents division by zero when minimizing window
-	if (h == 0)	h = 1;
 	glViewport(0, 0, w, h);
 	engine->setSize(w,h);
 }
@@ -49,8 +47,8 @@ void GlutDisplay::render(ScanLineZBuffer* engine)
 	glutCreateWindow("ScanLineZBuffer");
 	glutDisplayFunc(GlutDisplay::loop);
 	glutReshapeFunc(reshape);
-	//glutMouseFunc(mouseCallBack);
-	//glutMotionFunc(motionCallBack);
+	glutMouseFunc(NULL);
+	glutMotionFunc(NULL);
 	glutMainLoop();
 }
 

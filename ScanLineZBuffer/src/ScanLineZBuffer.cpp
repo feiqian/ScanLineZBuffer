@@ -1,4 +1,5 @@
 #include "ScanLineZBuffer.h"
+#include <omp.h>
 
 //对活化多边形表排序的比较函数
 static bool cmp(const ActiveEdgeTableEle &lhs, const ActiveEdgeTableEle &rhs)
@@ -45,11 +46,13 @@ void ScanLineZBuffer::getSize(int& width,int& height)
 
 void ScanLineZBuffer::setSize(int width,int height)
 {
+	if(width<0||height<0) return;
 	if(width==this->width&&height==this->height) return;
 	releaseMemory();
 	this->width = width;
 	this->height = height;
 
+	needReRender = true;
 	zBuffer = new double[width];
 	colorBuffer = new Color3*[height];
 	for(int i=0;i<height;++i) colorBuffer[i] = new Color3[width];
@@ -80,7 +83,7 @@ bool ScanLineZBuffer::loadObj(const char* objFile)
 				Vec3 vertex(shapes[i].mesh.positions[3*v+0],
 					shapes[i].mesh.positions[3*v+1],
 					shapes[i].mesh.positions[3*v+2]);
-				
+
 				face.vertexIndex.push_back(vertices.size());
 				vertices.push_back(vertex);
 			}
@@ -117,7 +120,10 @@ void ScanLineZBuffer::initScene()
 	else max_scalar = height / (2 * scale);
 
 	newVertices.resize(vertices.size());
-	for (int i=0,len=vertices.size();i<len;++i)
+
+	int len=vertices.size();
+	#pragma omp parallel for 
+	for(int i=0;i<len;++i)
 	{
 		Vec3 vertex = vertices[i];
 		vertex.x = vertex.x*max_scalar+width/2;
@@ -136,14 +142,16 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 	polygonTable.resize(height);
 	edgeTable.resize(height);
 
-	for (vector<ObjFace>::const_iterator face_it = faces.begin(); face_it != faces.end(); ++face_it)
+	int len=faces.size();
+	#pragma omp parallel for 
+	for (int i=0;i<len;++i)
 	{
 		double min_y=0xfffffff, max_y=-0xfffffff;
 		PolygonTableEle pt;
-		pt.id = face_it - faces.begin();
+		pt.id = i;
 		pt.color = faces[pt.id].color;
 
-		const vector<unsigned int>& vertexIndex = face_it->vertexIndex;
+		const vector<unsigned int>& vertexIndex = faces[i].vertexIndex;
 		for (int i=0,len = vertexIndex.size();i<len;++i)
 		{
 			Point3 pt1 = newVertices[vertexIndex[i]];
@@ -159,6 +167,8 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 
 			ete.id = pt.id;
 			ete.dx = -(pt1.x-pt2.x)/(pt1.y-pt2.y);
+
+			#pragma omp critical
 			edgeTable[Round(pt1.y)].push_back(ete);
 
 			min_y = min(pt2.y,min_y);
@@ -167,19 +177,20 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 
 
 		pt.dy = Round(max_y) - Round(min_y);
-		if(pt.dy<=0 || max_y<0 || min_y>=height) continue;
+		if(pt.dy>0&&max_y>0&&min_y<height)
+		{
+			Vec3 &a = newVertices[vertexIndex[0]],&b = newVertices[vertexIndex[1]],&c = newVertices[vertexIndex[2]];
+			Vec3& normal = Normalize(Cross(b-a,c-b));
 
-		Vec3 &a = newVertices[face_it->vertexIndex[0]],&b = newVertices[vertexIndex[1]],&c = newVertices[vertexIndex[2]];
-		Vec3& normal = Normalize(Cross(b-a,c-b));
+			pt.a = normal.x;
+			pt.b = normal.y;
+			pt.c = normal.z;
+			pt.d = -(pt.a*newVertices[vertexIndex[0]].x+pt.b*newVertices[vertexIndex[0]].y+pt.c*newVertices[vertexIndex[0]].z);
 
-		pt.a = normal.x;
-		pt.b = normal.y;
-		pt.c = normal.z;
-		pt.d = -(pt.a*newVertices[vertexIndex[0]].x+pt.b*newVertices[vertexIndex[0]].y+pt.c*newVertices[vertexIndex[0]].z);
-
-		polygonTable[Round(max_y)].push_back(pt);
+			#pragma omp critical
+			polygonTable[Round(max_y)].push_back(pt);
+		}
 	}
-
 }
 
 void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
@@ -187,7 +198,7 @@ void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 	if(pt_it->dy<0) return;
 
 	//把该多边形在oxy平面上的投影和扫描线相交的边加入到活化边表中
-	for(list<EdgeTableEle>::const_iterator et_it = edgeTable[y].begin();et_it!=edgeTable[y].end();)
+	for(list<EdgeTableEle>::iterator et_it = edgeTable[y].begin();et_it!=edgeTable[y].end();)
 	{
 		if(et_it->id!=pt_it->id){
 			++et_it;
@@ -213,7 +224,7 @@ void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 		}
 
 		pt_it->activeEdgeTable.push_back(aete);
-		et_it = edgeTable[y].erase(et_it);
+		et_it->id = -1;
 	}
 
 	// 对当前活化多边形的活化边表按照x排序
@@ -222,6 +233,8 @@ void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 
 Color3** ScanLineZBuffer::render()
 {
+	if(!needReRender) return colorBuffer;
+
 	initScene();
 	buildPolygonAndEdgeTable();
 
@@ -240,11 +253,15 @@ Color3** ScanLineZBuffer::render()
 		for(list<PolygonTableEle>::iterator pt_it = polygonTable[y].begin();pt_it!=polygonTable[y].end();++pt_it)
 			activePolygonTable.push_back(*pt_it);
 	
-		for(list<PolygonTableEle>::iterator apt_it = activePolygonTable.begin();apt_it!=activePolygonTable.end();)
+		int len = activePolygonTable.size();
+		#pragma omp parallel for 
+		for(int i=0;i<len;++i)
 		{
-			addEdgeToActiveTable(y,&(*apt_it));
+			PolygonTableEle& pte = activePolygonTable[i];
 
-			list<ActiveEdgeTableEle>& aet = apt_it->activeEdgeTable;
+			addEdgeToActiveTable(y,&pte);
+
+			list<ActiveEdgeTableEle>& aet = pte.activeEdgeTable;
 			assert(aet.size()%2==0);
 
 			for(list<ActiveEdgeTableEle>::iterator aet_it = aet.begin();aet_it!=aet.end();++aet_it)
@@ -259,7 +276,7 @@ Color3** ScanLineZBuffer::render()
 					if(zx>=zBuffer[x])
 					{
 						zBuffer[x] = zx;
-						colorBuffer[y][x] = apt_it->color;
+						colorBuffer[y][x] = pte.color;
 					}
 					zx+=aet_it->zl;
 				}
@@ -277,8 +294,11 @@ Color3** ScanLineZBuffer::render()
 				if(aet_it->dyl<=0) aet_it = aet.erase(aet_it);
 				else ++aet_it;
 			}
-
-			--apt_it->dy;
+			--pte.dy;
+		}
+	
+		for(vector<PolygonTableEle>::iterator apt_it = activePolygonTable.begin();apt_it!=activePolygonTable.end();)
+		{
 			if(apt_it->dy<0) apt_it = activePolygonTable.erase(apt_it);
 			else ++apt_it;
 		}
@@ -287,6 +307,8 @@ Color3** ScanLineZBuffer::render()
 		if((int)newProgress!=(int)progress) cout<<"progress:"<<(int)progress<<"%"<<endl;
 		progress = newProgress;
 	}
+
+	needReRender = false;
 
 	cout<<"vertex num:"<<vertices.size()<<endl;
 	cout<<"face num:"<<faces.size()<<endl;
