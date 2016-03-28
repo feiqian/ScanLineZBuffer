@@ -1,0 +1,85 @@
+#include "GlutDisplay.h"
+
+bool GlutDisplay::bMouseDown = false;
+int GlutDisplay::mouseX=-1;
+int GlutDisplay::mouseY=-1;
+ScanLineZBuffer* GlutDisplay::engine= NULL;
+
+void GlutDisplay::reshape(int w, int h)
+{
+	// prevents division by zero when minimizing window
+	if (h == 0)	h = 1;
+	glViewport(0, 0, w, h);
+	engine->setSize(w,h);
+}
+
+void GlutDisplay::mouseCallBack(int button, int state, int x, int y)
+{
+	if (button == GLUT_LEFT_BUTTON)
+	{
+		if(state == GLUT_DOWN)
+		{
+			bMouseDown = true;
+			mouseX=x;
+			mouseY=y;
+			return;
+		}
+	}
+	bMouseDown = false;
+}
+
+void GlutDisplay::motionCallBack(int x, int y )
+{
+	if (bMouseDown)
+	{
+		mouseX = x;
+		mouseY = y;
+		glutPostRedisplay();
+	}
+}
+
+void GlutDisplay::render(ScanLineZBuffer* engine)
+{
+	int width=0,height=0;
+	engine->getSize(width,height);
+	GlutDisplay::engine = engine;
+
+	glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB);
+	glutInitWindowSize(width,height);
+	glutCreateWindow("ScanLineZBuffer");
+	glutDisplayFunc(GlutDisplay::loop);
+	glutReshapeFunc(reshape);
+	//glutMouseFunc(mouseCallBack);
+	//glutMotionFunc(motionCallBack);
+	glutMainLoop();
+}
+
+void GlutDisplay::loop()
+{
+	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	glMatrixMode(GL_MODELVIEW);
+	glLoadIdentity();
+	glMatrixMode(GL_PROJECTION);
+	glLoadIdentity();
+
+	int width=0,height=0;
+	engine->getSize(width,height);
+
+	gluOrtho2D(0,width,0,height);
+
+	Vec3** colorBuffer = engine->render();
+
+	glBegin(GL_POINTS);
+	for (int y = 0; y < height; ++y)  
+	{   
+		for (int x = 0; x < width; ++x)  
+		{  
+			Color3& rgb = colorBuffer[y][x];
+			glColor3d(rgb.r,rgb.g,rgb.b);  
+			glVertex2f(x,y);  
+		}  
+	}  
+	glEnd();
+
+	glFinish();
+}
