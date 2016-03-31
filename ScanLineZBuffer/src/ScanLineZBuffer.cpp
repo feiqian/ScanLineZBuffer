@@ -2,6 +2,7 @@
 #include "Timer.h"
 #include <omp.h>
 #include "windows.h"
+#define NUM_THREADS 10
 
 //对活化多边形表排序的比较函数
 static bool cmp(const ActiveEdgeTableEle &lhs, const ActiveEdgeTableEle &rhs)
@@ -42,7 +43,7 @@ static void printProgress(double& progress,double increment)
 	if(Round(newProgress)!=Round(progress)) 
 	{
 		SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE),info.dwCursorPosition);
-		cout<<"progress:"<<(int)(newProgress+0.5)<<"%"<<endl;
+		cout<<"progress:"<<Round(newProgress)<<"%"<<endl;
 	}
 	progress = newProgress;
 }
@@ -124,7 +125,7 @@ void ScanLineZBuffer::initScene()
 	newVertices.resize(objLoader.vertices.size());
 
 	int len= objLoader.vertices.size();
-	#pragma omp parallel for 
+	#pragma omp parallel for num_threads(NUM_THREADS)
 	for(int i=0;i<len;++i)
 	{
 		Point3 vertex = objLoader.vertices[i].point;
@@ -163,13 +164,12 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 			if(pt1.y<pt2.y) swap(pt1,pt2);
 
 			EdgeTableEle ete;
-			ete.x = pt1.x;
 			ete.dy = Round(pt1.y) - Round(pt2.y);
-
 			rgb+=phoneRender(pt1,face.normalIndex[i]>=0?objLoader.normals[face.normalIndex[i]]:face.normal);
 
 			if(ete.dy<=0) continue;
 
+			ete.x = pt1.x;
 			ete.id = pt.id;
 			ete.dx = -(pt1.x-pt2.x)/(pt1.y-pt2.y);
 
@@ -255,11 +255,10 @@ Color3** ScanLineZBuffer::render()
 			activePolygonTable.push_back(*pt_it);
 	
 		int len = activePolygonTable.size();
-		#pragma omp parallel for
+		#pragma omp parallel for num_threads(NUM_THREADS)
 		for(int i=0;i<len;++i)
 		{
 			PolygonTableEle& pte = activePolygonTable[i];
-			if(pte.dy<0) continue;
 
 			addEdgeToActiveTable(y,&pte);
 
@@ -291,13 +290,36 @@ Color3** ScanLineZBuffer::render()
 				edge2.zl+=edge2.dzx*edge2.dxl+edge2.dzy;
 			}
 
-			for(vector<ActiveEdgeTableEle>::iterator aet_it = aet.begin();aet_it!=aet.end();)
+			int last = 0;
+			for(int i=0,len=aet.size(); i<len; ++i, ++last)
 			{
-				if(aet_it->dyl<=0) aet_it = aet.erase(aet_it);
-				else ++aet_it;
+				while(aet[i].dyl<=0)
+				{
+					++i;
+					if(i>=len) break;
+				}
+				if(i >= len) break;
+
+				aet[last] = aet[i];   
 			}
+			aet.resize(last);
+
 			--pte.dy;
 		}
+
+		int last = 0;
+		for(int i=0,len=activePolygonTable.size(); i<len; ++i, ++last)
+		{
+			while(activePolygonTable[i].dy<0)
+			{
+				++i;
+				if(i>=len) break;
+			}
+			if(i >= len) break;
+
+			activePolygonTable[last] = activePolygonTable[i];   
+		}
+		activePolygonTable.resize(last);
 
 		printProgress(progress,100.0/height);
 	}
