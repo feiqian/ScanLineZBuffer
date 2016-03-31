@@ -29,7 +29,7 @@ struct PolygonTableEle
 	int id;//多边形编号
 	int dy;//多边形跨跃的扫描线数目
 	Color3 color;
-	std::list< ActiveEdgeTableEle> activeEdgeTable;
+	std::vector< ActiveEdgeTableEle> activeEdgeTable;
 };
 
 #endif

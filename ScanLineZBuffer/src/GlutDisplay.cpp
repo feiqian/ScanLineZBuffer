@@ -54,30 +54,18 @@ void GlutDisplay::render(ScanLineZBuffer* engine)
 
 void GlutDisplay::loop()
 {
-	glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+	int width=0,height=0;
+	engine->getSize(width,height);
+
+	glClear(GL_COLOR_BUFFER_BIT);
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
-
-	int width=0,height=0;
-	engine->getSize(width,height);
-
 	gluOrtho2D(0,width,0,height);
 
-	Vec3** colorBuffer = engine->render();
-
-	glBegin(GL_POINTS);
-	for (int y = 0; y < height; ++y)  
-	{   
-		for (int x = 0; x < width; ++x)  
-		{  
-			Color3& rgb = colorBuffer[y][x];
-			glColor3d(rgb.r,rgb.g,rgb.b);  
-			glVertex2f(x,y);  
-		}  
-	}  
-	glEnd();
+	GLvoid * colorBuffer = engine->render();	
+	glDrawPixels(width,height,GL_RGB,GL_UNSIGNED_BYTE,colorBuffer);
 
 	glFinish();
 }

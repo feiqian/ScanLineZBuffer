@@ -1,5 +1,7 @@
 #include "ScanLineZBuffer.h"
+#include "Timer.h"
 #include <omp.h>
+#include "windows.h"
 
 //对活化多边形表排序的比较函数
 static bool cmp(const ActiveEdgeTableEle &lhs, const ActiveEdgeTableEle &rhs)
@@ -30,6 +32,21 @@ static Color3 phoneRender(const Point3& position,const Vec3& normal)
 	return Limit(rgb,0,1);
 }
 
+static void printProgress(double& progress,double increment)
+{
+	static CONSOLE_SCREEN_BUFFER_INFO info;
+
+	if(!progress) GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE),&info);
+	double newProgress = progress+increment;
+
+	if(Round(newProgress)!=Round(progress)) 
+	{
+		SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE),info.dwCursorPosition);
+		cout<<"progress:"<<(int)(newProgress+0.5)<<"%"<<endl;
+	}
+	progress = newProgress;
+}
+
 ScanLineZBuffer::ScanLineZBuffer()
 {
 	setSize(500,500);
@@ -50,7 +67,6 @@ void ScanLineZBuffer::releaseMemory()
 
 	if(colorBuffer!=NULL)
 	{
-		for(int i=0;i<height;++i) delete [] colorBuffer[i];
 		delete [] colorBuffer;
 		colorBuffer = NULL;
 	}
@@ -66,18 +82,19 @@ void ScanLineZBuffer::setSize(int width,int height)
 {
 	if(width<0||height<0) return;
 	if(width==this->width&&height==this->height) return;
+
 	releaseMemory();
 	this->width = width;
 	this->height = height;
 
 	needReRender = true;
 	zBuffer = new double[width];
-	colorBuffer = new Color3*[height];
-	for(int i=0;i<height;++i) colorBuffer[i] = new Color3[width];
+	colorBuffer = new GLubyte[width*height*3];
 }
 
 bool ScanLineZBuffer::loadObj(const char* objFile)
 {
+	TotalTimer totalTimer("loading obj file");
 	return objLoader.loadFromFile(objFile);
 }
 
@@ -85,15 +102,13 @@ void ScanLineZBuffer::initScene()
 {
 	double scale;
 	Point3 min_xyz(0xfffffff,0xfffffff,0xfffffff), max_xyz(-0xfffffff,-0xfffffff,-0xfffffff);
-	for (vector<ObjVertex>::const_iterator vertex_it = objLoader.vertices.begin(); vertex_it != objLoader.vertices.end(); ++vertex_it)
+	for (vector<ObjVertex>::const_iterator vertex_it = objLoader.vertices.begin(),end=objLoader.vertices.end(); vertex_it !=end ; ++vertex_it)
 	{
 		const Point3& vertex = vertex_it->point;
 		min_xyz.x = min(min_xyz.x, vertex.x);
 		min_xyz.y = min(min_xyz.y, vertex.y);
-		min_xyz.z = min(min_xyz.z, vertex.z);
 		max_xyz.x = max(max_xyz.x, vertex.x);
 		max_xyz.y = max(max_xyz.y, vertex.y);
-		max_xyz.z = max(max_xyz.z, vertex.z);
 	}
 
 	Vec3 range (max_xyz.x - min_xyz.x, max_xyz.y - min_xyz.y, 0); 
@@ -183,11 +198,10 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 
 void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 {
-	if(pt_it->dy<0) return;
 	bool flag = false;
 
 	//把该多边形在oxy平面上的投影和扫描线相交的边加入到活化边表中
-	for(list<EdgeTableEle>::iterator et_it = edgeTable[y].begin();et_it!=edgeTable[y].end();)
+	for(list<EdgeTableEle>::iterator et_it = edgeTable[y].begin(),end=edgeTable[y].end();et_it!=end;)
 	{
 		if(et_it->id!=pt_it->id){
 			++et_it;
@@ -218,43 +232,42 @@ void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 	}
 
 	// 对当前活化多边形的活化边表按照x排序
-	if(flag) pt_it->activeEdgeTable.sort(cmp);
+	if(flag) sort(pt_it->activeEdgeTable.begin(),pt_it->activeEdgeTable.end(),cmp);
 }
 
-Color3** ScanLineZBuffer::render()
+void* ScanLineZBuffer::render()
 {
 	if(!needReRender) return colorBuffer;
+	TotalTimer totalTimer("rendering");
 
 	initScene();
 	buildPolygonAndEdgeTable();
 
 	activePolygonTable.clear();
 	double progress = 0;
+	memset(colorBuffer,0,sizeof(GLubyte)*width*height*3);
 
 	for(int y = height-1;y>=0;--y)
 	{
-		for(int i=0;i<width;++i)
-		{
-			colorBuffer[y][i] = Color3::BLACK;
-			zBuffer[i] = -0xfffffff;
-		}
+		fill(zBuffer,zBuffer+width,-0xfffffff);
 
 		//检查分类的多边形表，如果有新的多边形涉及该扫描线，则把它放入活化的多边形表中
-		for(list<PolygonTableEle>::iterator pt_it = polygonTable[y].begin();pt_it!=polygonTable[y].end();++pt_it)
+		for(list<PolygonTableEle>::iterator pt_it = polygonTable[y].begin(),end = polygonTable[y].end();pt_it!=end;++pt_it)
 			activePolygonTable.push_back(*pt_it);
 	
 		int len = activePolygonTable.size();
-		#pragma omp parallel for 
+		#pragma omp parallel for
 		for(int i=0;i<len;++i)
 		{
 			PolygonTableEle& pte = activePolygonTable[i];
+			if(pte.dy<0) continue;
 
 			addEdgeToActiveTable(y,&pte);
 
-			list<ActiveEdgeTableEle>& aet = pte.activeEdgeTable;
+			vector<ActiveEdgeTableEle>& aet = pte.activeEdgeTable;
 			assert(aet.size()%2==0);
 
-			for(list<ActiveEdgeTableEle>::iterator aet_it = aet.begin();aet_it!=aet.end();++aet_it)
+			for(vector<ActiveEdgeTableEle>::iterator aet_it = aet.begin(),end=aet.end();aet_it!=end;++aet_it)
 			{
 				ActiveEdgeTableEle& edge1 = *aet_it;
 				ActiveEdgeTableEle& edge2 = *(++aet_it);
@@ -266,7 +279,11 @@ Color3** ScanLineZBuffer::render()
 					if(zx>=zBuffer[x])
 					{
 						zBuffer[x] = zx;
-						colorBuffer[y][x] = pte.color;
+
+						int index = y*width*3 + x*3;
+						colorBuffer[index] = pte.color.r*255;
+						colorBuffer[index + 1] = pte.color.g*255;
+						colorBuffer[index + 2] = pte.color.b*255;
 					}
 					zx+=aet_it->zl;
 				}
@@ -279,29 +296,20 @@ Color3** ScanLineZBuffer::render()
 				edge2.zl+=edge2.dzx*edge2.dxl+edge2.dzy;
 			}
 
-			for(list<ActiveEdgeTableEle>::iterator aet_it = aet.begin();aet_it!=aet.end();)
+			for(vector<ActiveEdgeTableEle>::iterator aet_it = aet.begin();aet_it!=aet.end();)
 			{
 				if(aet_it->dyl<=0) aet_it = aet.erase(aet_it);
 				else ++aet_it;
 			}
 			--pte.dy;
 		}
-	
-		for(vector<PolygonTableEle>::iterator apt_it = activePolygonTable.begin();apt_it!=activePolygonTable.end();)
-		{
-			if(apt_it->dy<0) apt_it = activePolygonTable.erase(apt_it);
-			else ++apt_it;
-		}
 
-		double newProgress = progress+(100.0/height);
-		if((int)newProgress!=(int)progress) cout<<"progress:"<<(int)progress<<"%"<<endl;
-		progress = newProgress;
+		printProgress(progress,100.0/height);
 	}
 
 	needReRender = false;
 
-	cout<<"vertex num:"<<objLoader.vertices.size()<<endl;
-	cout<<"face num:"<<objLoader.faces.size()<<endl;
+	cout<<"vertex num:"<<objLoader.vertices.size()<<",face num:"<<objLoader.faces.size()<<endl;
 	return colorBuffer;
 }
 
