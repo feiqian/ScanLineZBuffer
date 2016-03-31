@@ -11,11 +11,6 @@
 #include "PolygonAndEdgeTableStrcture.h"
 using namespace std;
 
-struct  ObjFace
-{
-	vector<unsigned int> vertexIndex;
-	Color3 color;
-};
 
 class ScanLineZBuffer
 {
@@ -35,9 +30,8 @@ private:
 
 	void releaseMemory();
 
-	vector<Vec3> vertices;
-	vector<Vec3> newVertices;
-	vector<ObjFace> faces;
+	ObjLoader objLoader;
+	vector<ObjVertex> newVertices;
 
 	vector< list<PolygonTableEle>> polygonTable;
 	vector< list<EdgeTableEle>> edgeTable;

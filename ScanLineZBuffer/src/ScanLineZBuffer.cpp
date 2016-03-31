@@ -60,49 +60,16 @@ void ScanLineZBuffer::setSize(int width,int height)
 
 bool ScanLineZBuffer::loadObj(const char* objFile)
 {
-	std::vector<ObjLoader::shape_t> shapes;
-	std::vector<ObjLoader::material_t> materials;
-	std::string err;
-	bool ret = ObjLoader::LoadObj(shapes, materials, err, objFile);
-
-	if (!err.empty()) {
-		std::cerr << err << std::endl;
-		return false;
-	}
-
-	for (size_t i = 0; i < shapes.size(); i++) {
-		size_t indexOffset = 0;
-
-		for (size_t n = 0; n < shapes[i].mesh.num_vertices.size(); n++) {
-			int ngon = shapes[i].mesh.num_vertices[n];
-			ObjFace face;
-
-			for (size_t f = 0; f < ngon; f++) {
-				unsigned int v = shapes[i].mesh.indices[indexOffset + f];
-
-				Vec3 vertex(shapes[i].mesh.positions[3*v+0],
-					shapes[i].mesh.positions[3*v+1],
-					shapes[i].mesh.positions[3*v+2]);
-
-				face.vertexIndex.push_back(vertices.size());
-				vertices.push_back(vertex);
-			}
-			indexOffset += ngon;
-
-			face.color = Color3(1,1,1);
-			faces.push_back(face);
-		}
-	}
-	return true;
+	return objLoader.loadFromFile(objFile);
 }
 
 void ScanLineZBuffer::initScene()
 {
 	double scale;
 	Point3 min_xyz(0xfffffff,0xfffffff,0xfffffff), max_xyz(-0xfffffff,-0xfffffff,-0xfffffff);
-	for (vector<Vec3>::const_iterator vertex_it = vertices.begin(); vertex_it != vertices.end(); ++vertex_it)
+	for (vector<ObjVertex>::const_iterator vertex_it = objLoader.vertices.begin(); vertex_it != objLoader.vertices.end(); ++vertex_it)
 	{
-		const Vec3& vertex = (*vertex_it);
+		const Point3& vertex = vertex_it->point;
 		min_xyz.x = min(min_xyz.x, vertex.x);
 		min_xyz.y = min(min_xyz.y, vertex.y);
 		min_xyz.z = min(min_xyz.z, vertex.z);
@@ -119,20 +86,19 @@ void ScanLineZBuffer::initScene()
 	if (width < height) max_scalar = width / (2 * scale);
 	else max_scalar = height / (2 * scale);
 
-	newVertices.resize(vertices.size());
+	newVertices.resize(objLoader.vertices.size());
 
-	int len=vertices.size();
+	int len= objLoader.vertices.size();
 	#pragma omp parallel for 
 	for(int i=0;i<len;++i)
 	{
-		Vec3 vertex = vertices[i];
+		Point3 vertex = objLoader.vertices[i].point;
 		vertex.x = vertex.x*max_scalar+width/2;
 		vertex.y = vertex.y*max_scalar+height/2;
 		vertex.z = vertex.z*max_scalar;
-		newVertices[i] = vertex;
+		newVertices[i].point = vertex;
 	}
 }
-
 
 void ScanLineZBuffer::buildPolygonAndEdgeTable()
 {
@@ -142,20 +108,19 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 	polygonTable.resize(height);
 	edgeTable.resize(height);
 
-	int len=faces.size();
+	int len=objLoader.faces.size();
 	#pragma omp parallel for 
 	for (int i=0;i<len;++i)
 	{
 		double min_y=0xfffffff, max_y=-0xfffffff;
 		PolygonTableEle pt;
 		pt.id = i;
-		pt.color = faces[pt.id].color;
-
-		const vector<unsigned int>& vertexIndex = faces[i].vertexIndex;
+		
+		const vector<int>& vertexIndex = objLoader.faces[i].vertexIndex;
 		for (int i=0,len = vertexIndex.size();i<len;++i)
 		{
-			Point3 pt1 = newVertices[vertexIndex[i]];
-			Point3 pt2 = (i==len-1?newVertices[vertexIndex[0]]:newVertices[vertexIndex[i+1]]);
+			Point3 pt1 = newVertices[vertexIndex[i]].point;
+			Point3 pt2 = (i==len-1?newVertices[vertexIndex[0]].point:newVertices[vertexIndex[i+1]].point);
 
 			if(pt1.y<pt2.y) swap(pt1,pt2);
 
@@ -179,13 +144,14 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 		pt.dy = Round(max_y) - Round(min_y);
 		if(pt.dy>0&&max_y>0&&min_y<height)
 		{
-			Vec3 &a = newVertices[vertexIndex[0]],&b = newVertices[vertexIndex[1]],&c = newVertices[vertexIndex[2]];
-			Vec3& normal = Normalize(Cross(b-a,c-b));
+			Point3 &a = newVertices[vertexIndex[0]].point,&b = newVertices[vertexIndex[1]].point,&c = newVertices[vertexIndex[2]].point;
+			Vec3& normal = objLoader.faces[pt.id].normal;
 
 			pt.a = normal.x;
 			pt.b = normal.y;
 			pt.c = normal.z;
-			pt.d = -(pt.a*newVertices[vertexIndex[0]].x+pt.b*newVertices[vertexIndex[0]].y+pt.c*newVertices[vertexIndex[0]].z);
+			pt.d = -(pt.a*a.x+pt.b*a.y+pt.c*a.z);
+			pt.color = Color3(1,1,1);
 
 			#pragma omp critical
 			polygonTable[Round(max_y)].push_back(pt);
@@ -310,8 +276,8 @@ Color3** ScanLineZBuffer::render()
 
 	needReRender = false;
 
-	cout<<"vertex num:"<<vertices.size()<<endl;
-	cout<<"face num:"<<faces.size()<<endl;
+	cout<<"vertex num:"<<objLoader.vertices.size()<<endl;
+	cout<<"face num:"<<objLoader.faces.size()<<endl;
 	return colorBuffer;
 }
 
@@ -319,8 +285,6 @@ void ScanLineZBuffer::run(const char* obj_file)
 {
 	if(loadObj(obj_file))
 	{
-		if(!vertices.size()||!faces.size()) return;
 		GlutDisplay::render(this);
 	}
-
 }

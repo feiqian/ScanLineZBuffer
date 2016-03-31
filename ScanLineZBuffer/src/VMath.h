@@ -205,4 +205,30 @@ inline double Length2(const Vec3 &u)
 	return u.x * u.x + u.y * u.y + u.z * u.z;
 }
 
+inline Vec3 Limit(const Vec3& src, double bottom, double top)
+{
+	Vec3 result;
+	if (src.r < bottom) {
+		result.r = bottom;
+	} else if (src.r > top) {
+		result.r = top;
+	} else {
+		result.r = src.r;
+	}
+	if (src.g < bottom) {
+		result.g = bottom;
+	} else if (src.g > top) {
+		result.g = top;
+	} else {
+		result.g = src.g;
+	}
+	if (src.b < bottom) {
+		result.b = bottom;
+	} else if (src.b > top) {
+		result.b = top;
+	} else {
+		result.b = src.b;
+	}
+	return result;
+}
 #endif
