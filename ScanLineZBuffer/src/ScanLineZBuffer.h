@@ -18,7 +18,7 @@ public:
 	ScanLineZBuffer();
 	~ScanLineZBuffer();
 	void run(const char* obj_file);
-	void* render();
+	Color3** render();
 	void getSize(int& width,int& height);
 	void setSize(int width,int height);
 
@@ -40,7 +40,7 @@ private:
 	bool needReRender;
 	int width,height;
 	double* zBuffer;
-	GLubyte* colorBuffer;
+	Color3** colorBuffer;
 };
 
 #endif

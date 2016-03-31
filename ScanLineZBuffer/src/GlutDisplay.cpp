@@ -64,8 +64,19 @@ void GlutDisplay::loop()
 	glLoadIdentity();
 	gluOrtho2D(0,width,0,height);
 
-	GLvoid * colorBuffer = engine->render();	
-	glDrawPixels(width,height,GL_RGB,GL_UNSIGNED_BYTE,colorBuffer);
+	Color3** colorBuffer = engine->render();	
+	
+	glBegin(GL_POINTS);
+	for (int y = 0; y < height; ++y)  
+	{   
+		for (int x = 0; x < width; ++x)  
+		{  
+			Color3& rgb = colorBuffer[y][x];
+			glColor3d(rgb.r,rgb.g,rgb.b);  
+			glVertex2f(x,y);  
+		}  
+	}  
+	glEnd();
 
 	glFinish();
 }

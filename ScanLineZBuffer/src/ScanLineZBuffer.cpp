@@ -67,6 +67,7 @@ void ScanLineZBuffer::releaseMemory()
 
 	if(colorBuffer!=NULL)
 	{
+		for(int i=0;i<height;++i) delete [] colorBuffer[i];
 		delete [] colorBuffer;
 		colorBuffer = NULL;
 	}
@@ -89,7 +90,8 @@ void ScanLineZBuffer::setSize(int width,int height)
 
 	needReRender = true;
 	zBuffer = new double[width];
-	colorBuffer = new GLubyte[width*height*3];
+	colorBuffer = new Color3*[height];
+	for(int i=0;i<height;++i) colorBuffer[i] = new Color3[width];
 }
 
 bool ScanLineZBuffer::loadObj(const char* objFile)
@@ -198,8 +200,6 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 
 void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 {
-	bool flag = false;
-
 	//把该多边形在oxy平面上的投影和扫描线相交的边加入到活化边表中
 	for(list<EdgeTableEle>::iterator et_it = edgeTable[y].begin(),end=edgeTable[y].end();et_it!=end;)
 	{
@@ -228,14 +228,13 @@ void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 
 		pt_it->activeEdgeTable.push_back(aete);
 		et_it->id = -1;
-		flag = true;
 	}
 
 	// 对当前活化多边形的活化边表按照x排序
-	if(flag) sort(pt_it->activeEdgeTable.begin(),pt_it->activeEdgeTable.end(),cmp);
+	sort(pt_it->activeEdgeTable.begin(),pt_it->activeEdgeTable.end(),cmp);
 }
 
-void* ScanLineZBuffer::render()
+Color3** ScanLineZBuffer::render()
 {
 	if(!needReRender) return colorBuffer;
 	TotalTimer totalTimer("rendering");
@@ -245,10 +244,10 @@ void* ScanLineZBuffer::render()
 
 	activePolygonTable.clear();
 	double progress = 0;
-	memset(colorBuffer,0,sizeof(GLubyte)*width*height*3);
 
 	for(int y = height-1;y>=0;--y)
 	{
+		memset(colorBuffer[y],0,sizeof(Color3)*width);
 		fill(zBuffer,zBuffer+width,-0xfffffff);
 
 		//检查分类的多边形表，如果有新的多边形涉及该扫描线，则把它放入活化的多边形表中
@@ -279,11 +278,7 @@ void* ScanLineZBuffer::render()
 					if(zx>=zBuffer[x])
 					{
 						zBuffer[x] = zx;
-
-						int index = y*width*3 + x*3;
-						colorBuffer[index] = pte.color.r*255;
-						colorBuffer[index + 1] = pte.color.g*255;
-						colorBuffer[index + 2] = pte.color.b*255;
+						colorBuffer[y][x] = pte.color;
 					}
 					zx+=aet_it->zl;
 				}
