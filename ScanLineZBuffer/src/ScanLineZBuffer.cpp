@@ -12,6 +12,24 @@ static bool cmp(const ActiveEdgeTableEle &lhs, const ActiveEdgeTableEle &rhs)
 	return false;
 }
 
+//计算顶点颜色
+static Color3 phoneRender(const Point3& position,const Vec3& normal)
+{
+	static Point3 lightPosition(0,0,0);
+	static double kd=0.8;
+	static Color3 ambientColor(0.3,0.3,0.3);
+	Color3 triColor((double)rand()/RAND_MAX,(double)rand()/RAND_MAX,(double)rand()/RAND_MAX);
+	Color3 rgb;
+
+	//calculate the diffuse color
+	Vec3& rayDirection = Normalize(lightPosition-position);
+	double dot = Dot(rayDirection,normal);
+	if(dot>0.0) rgb+=dot*kd*triColor;
+	rgb+=ambientColor;
+
+	return Limit(rgb,0,1);
+}
+
 ScanLineZBuffer::ScanLineZBuffer()
 {
 	setSize(500,500);
@@ -113,6 +131,9 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 	for (int i=0;i<len;++i)
 	{
 		double min_y=0xfffffff, max_y=-0xfffffff;
+		Color3 rgb;
+		ObjFace& face = objLoader.faces[i];
+
 		PolygonTableEle pt;
 		pt.id = i;
 		
@@ -127,6 +148,8 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 			EdgeTableEle ete;
 			ete.x = pt1.x;
 			ete.dy = Round(pt1.y) - Round(pt2.y);
+
+			rgb+=phoneRender(pt1,face.normalIndex[i]>=0?objLoader.normals[face.normalIndex[i]]:face.normal);
 
 			if(ete.dy<=0) continue;
 
@@ -145,13 +168,12 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 		if(pt.dy>0&&max_y>0&&min_y<height)
 		{
 			Point3 &a = newVertices[vertexIndex[0]].point,&b = newVertices[vertexIndex[1]].point,&c = newVertices[vertexIndex[2]].point;
-			Vec3& normal = objLoader.faces[pt.id].normal;
 
-			pt.a = normal.x;
-			pt.b = normal.y;
-			pt.c = normal.z;
+			pt.a = face.normal.x;
+			pt.b = face.normal.y;
+			pt.c = face.normal.z;
 			pt.d = -(pt.a*a.x+pt.b*a.y+pt.c*a.z);
-			pt.color = Color3(1,1,1);
+			pt.color = rgb/vertexIndex.size();
 
 			#pragma omp critical
 			polygonTable[Round(max_y)].push_back(pt);
@@ -162,6 +184,7 @@ void ScanLineZBuffer::buildPolygonAndEdgeTable()
 void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 {
 	if(pt_it->dy<0) return;
+	bool flag = false;
 
 	//把该多边形在oxy平面上的投影和扫描线相交的边加入到活化边表中
 	for(list<EdgeTableEle>::iterator et_it = edgeTable[y].begin();et_it!=edgeTable[y].end();)
@@ -191,10 +214,11 @@ void ScanLineZBuffer::addEdgeToActiveTable(int y,PolygonTableEle* pt_it)
 
 		pt_it->activeEdgeTable.push_back(aete);
 		et_it->id = -1;
+		flag = true;
 	}
 
 	// 对当前活化多边形的活化边表按照x排序
-	pt_it->activeEdgeTable.sort(cmp);
+	if(flag) pt_it->activeEdgeTable.sort(cmp);
 }
 
 Color3** ScanLineZBuffer::render()
@@ -237,7 +261,7 @@ Color3** ScanLineZBuffer::render()
 
 				double zx = edge1.zl;
 
-				for(int x=Round(edge1.xl);x<Round(edge2.xl);++x)
+				for(int x=Round(edge1.xl),end=Round(edge2.xl);x<end;++x)
 				{
 					if(zx>=zBuffer[x])
 					{

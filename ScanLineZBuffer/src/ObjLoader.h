@@ -17,7 +17,6 @@ struct ObjVertex
 {
 	Point3 point;
 	Color3 color;
-	int faceIndex;
 };
 
 struct ObjLoader

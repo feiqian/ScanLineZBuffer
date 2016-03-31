@@ -56,7 +56,6 @@ bool ObjLoader::loadFromFile(const char* objPath)
 				}
 				else file.putback(splitter);
 
-				vertices[vIndex-1].faceIndex = faceIndex;
 				face.vertexIndex.push_back(vIndex-1);
 				face.normalIndex.push_back(nIndex-1);
 			}
